@@ -1,0 +1,299 @@
+import asyncio
+import json
+import pathlib
+import itertools
+import os
+
+import typer
+import pandas as pd
+import openai
+import tqdm
+import rich.pretty
+
+
+app = typer.Typer()
+
+def load_df(file_path: pathlib.Path) -> pd.DataFrame:
+    if file_path.suffix == ".csv":
+        return pd.read_csv(file_path)
+    if file_path.suffix == ".json":
+        return pd.read_json(file_path)
+    if file_path.suffix == ".jsonl":
+        return pd.read_json(file_path, lines=True)
+    else:
+        raise ValueError(f"Unsupported file format: {file_path.suffix}")
+
+
+async def call_llm(
+    system_prompt: str,
+    user_content: str,
+    problem_id: str,
+    client: openai.AsyncOpenAI,
+    model: str,
+    temperature: float,
+    max_retries: int,
+    retry_sleep_secs: float,
+    max_completion_tokens: int,
+) -> str:
+    """Call LLM API with retries on failure."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = await client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                max_completion_tokens=max_completion_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            if attempt < max_retries:
+                typer.secho(f"problem {problem_id} [attempt {attempt}/{max_retries}] failed: {e}, retrying after {retry_sleep_secs} seconds...", fg="yellow")
+                await asyncio.sleep(retry_sleep_secs)
+    typer.secho(f"problem {problem_id} failed after {max_retries} attempts.", fg="red")
+    raise RuntimeError(f"problem {problem_id} failed after {max_retries} retries.")
+
+
+async def run_bounded(coros, max_concurrency: int):
+    """Yield results with bounded concurrency as they complete."""
+    semaphore = asyncio.Semaphore(max_concurrency)
+
+    async def bounded(coro):
+        async with semaphore:
+            return await coro
+
+    for fut in asyncio.as_completed([bounded(c) for c in coros]):
+        yield await fut
+
+
+def _get_client() -> openai.AsyncAzureOpenAI:
+    """Instantiate an async Azure OpenAI client."""
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    if not api_key:
+        raise EnvironmentError("Set the AZURE_OPENAI_API_KEY environment variable.")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    if not endpoint:
+        raise EnvironmentError("Set the AZURE_OPENAI_ENDPOINT environment variable.")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+
+    # Quick connectivity check
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            f"{endpoint.rstrip('/')}/openai/models?api-version={api_version}",
+            headers={"api-key": api_key},
+        )
+        urllib.request.urlopen(req, timeout=10)
+        print(f"✓ Successfully connected to {endpoint}")
+    except Exception as e:
+        print(f"✗ Cannot reach endpoint {endpoint}: {e}")
+        print("  Check your network, VPN, firewall, or proxy settings.")
+
+    return openai.AsyncAzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=endpoint,
+        api_version=api_version,
+    )
+
+
+def extract_answer(response: str) -> str:
+    """Extract the final answer from the model response."""
+    for line in reversed(response.splitlines()):
+        line = line.strip()
+        if line.upper().startswith("ANSWER:"):
+            return line.split(":", 1)[1].strip()
+    # Fallback: return last non-empty line
+    for line in reversed(response.splitlines()):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def normalize(text: str) -> str:
+    """Normalize an answer string for comparison."""
+    t = str(text).strip().lower().rstrip(".")
+    for ch in ("$", ",", "%"):
+        t = t.replace(ch, "")
+    try:
+        return str(float(t))
+    except ValueError:
+        return t
+
+
+def answers_match(expected: str, predicted: str) -> bool:
+    """Check whether the predicted answer matches the expected one."""
+    return normalize(expected) == normalize(predicted)
+
+
+@app.command()
+def augment(
+    base_problems_file: pathlib.Path,
+    prompt_file: pathlib.Path,
+    output_dir: pathlib.Path,
+    n_variants: int = typer.Option(10),
+    max_concurrency: int = typer.Option(100),
+    api_model: str = "gpt-5.2-2025-12-11",
+    temperature: float = 0.7,
+    max_retries: int = 5,
+    retry_sleep_secs: float = 10,
+    max_tokens: int = 8196,
+) -> None:
+
+    typer.secho(f"Loading system prompt from {prompt_file}...", fg="cyan")
+    with open(prompt_file, "r") as f:
+        system_prompt = f.read()
+
+    typer.secho(f"Loading base problems from {base_problems_file}...", fg="cyan")
+    df = load_df(base_problems_file)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    output_filename = output_dir / f"{base_problems_file.stem}___{prompt_file.stem}={api_model}.jsonl"
+    if output_filename.exists():
+        raise FileExistsError(f"Output file {output_filename} already exists. Please remove it before running the script.")
+
+    typer.secho(f"Initializing the client...", fg="cyan")
+    client = _get_client()
+
+    records = df.to_dict(orient="records")
+    total = len(records) * n_variants
+    typer.secho(f"Generating variants for {len(records)} problems (total {total} variants) using model {api_model}...", fg="cyan")
+
+    async def _make_coro(row: dict, variant_idx: int) -> dict:
+        question = row["question"]
+        paraphrased = await call_llm(
+            system_prompt=system_prompt,
+            user_content=question,
+            problem_id=f"{row['id']}/variant_{variant_idx}",
+            client=client,
+            model=api_model,
+            temperature=temperature,
+            max_retries=max_retries,
+            retry_sleep_secs=retry_sleep_secs,
+            max_completion_tokens=max_tokens,
+        )
+        return {
+            **row,
+            "question": paraphrased,
+            "question_orig": question,
+            "question_variant_idx": variant_idx,
+            "question_system_prompt": system_prompt,
+            "question_api_model": api_model,
+            "question_temperature": temperature,
+            "question_max_tokens": max_tokens,
+        }
+
+    coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_variants)))
+
+    async def _run() -> None:
+        with open(output_filename, "a", buffering=1) as f, tqdm.tqdm(total=total, desc="generating variants") as pbar:
+            async for result in run_bounded(coros, max_concurrency):
+                f.write(json.dumps(result) + "\n")
+                f.flush()
+                pbar.update(1)
+
+    asyncio.run(_run())
+
+    typer.secho(f"Done! Generated {total} augmented problems.", fg="green")
+
+
+@app.command()
+def predict(
+    problems_file: pathlib.Path,
+    pred_dir: pathlib.Path,
+    n_repeats: int = typer.Option(...),
+    max_concurrency: int = typer.Option(100),
+    api_model: str = "gpt-5.2-2025-12-11",
+    temperature: float = 0.7,
+    max_retries: int = 5,
+    retry_sleep_secs: float = 10,
+    max_tokens: int = 8196,
+    system_prompt_file: pathlib.Path | None = "./prompts/solve.txt",
+) -> None:
+    typer.secho(f"Loading system prompt from {system_prompt_file}...", fg="cyan")
+    with open(system_prompt_file, "r") as f:
+        system_prompt = f.read()
+
+    typer.secho(f"Loading problems from {problems_file}...", fg="cyan")
+    df = load_df(problems_file)
+
+    pred_file = pred_dir / f"{problems_file.stem}___eval={api_model}.jsonl"
+    if pred_file.exists():
+        raise FileExistsError(f"Output file {pred_file} already exists.")
+
+    typer.secho(f"Initializing the client...", fg="cyan")
+    client = _get_client()
+
+    records = df.to_dict(orient="records")
+    total = len(records) * n_repeats
+    typer.secho(f"Evaluating {len(records)} problems ({total} requests) using model {api_model}...", fg="cyan")
+
+    async def _make_coro(row: dict, repeat_idx: int) -> dict:
+        prediction = await call_llm(
+            system_prompt=system_prompt,
+            user_content=row["question"],
+            problem_id=row["id"],
+            client=client,
+            model=api_model,
+            temperature=temperature,
+            max_retries=max_retries,
+            retry_sleep_secs=retry_sleep_secs,
+            max_completion_tokens=max_tokens,
+        )
+        return {
+            **row,
+            "prediction": prediction,
+            "predicted_result": extract_answer(prediction),
+            "prediction_api_model": api_model,
+            "prediction_system_prompt": system_prompt,
+            "prediction_repeat_idx": repeat_idx,
+            "prediction_temperature": temperature,
+            "prediction_max_tokens": max_tokens,
+            "prediction_max_retries": max_retries,
+            "prediction_retry_sleep_secs": retry_sleep_secs,
+        }
+
+    coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_repeats)))
+
+    async def _run() -> None:
+        with open(pred_file, "a", buffering=1) as f, tqdm.tqdm(total=total, desc="generating predictions") as pbar:
+            async for result in run_bounded(coros, max_concurrency):
+                f.write(json.dumps(result) + "\n")
+                f.flush()
+                pbar.update(1)
+
+    asyncio.run(_run())
+    typer.secho(f"Done! Predictions saved to {pred_file}.", fg="green")
+
+
+@app.command()
+def eval(
+    pred_file: pathlib.Path,
+    base_pred_file: pathlib.Path | None = None,
+) -> None:
+    pred_df = load_df(pred_file)
+    pred_df["is_correct"] = pred_df.apply(lambda row: answers_match(row["answer"], row["predicted_result"]), axis=1)
+    report = {
+        "unique_problems": pred_df["id"].nunique(),
+        "total_problems": len(pred_df),
+        "acc": pred_df["is_correct"].mean().item(),
+    }
+
+    if base_pred_file is None:
+        typer.secho(f"No base predictions file provided. Reporting limited evaluation results.", fg="yellow")
+    else:
+        base_df = load_df(base_pred_file)
+        base_df["is_correct"] = base_df.apply(lambda row: answers_match(row["answer"], row["predicted_result"]), axis=1)
+
+        report.update({
+            "acc_base": base_df["is_correct"].mean().item(),
+            "acc_delta": pred_df["is_correct"].mean().item() - base_df["is_correct"].mean().item(),
+        })
+        # TODO: add more detailed comparison
+
+    typer.secho(f"Evaluation report:", fg="cyan")
+    rich.pretty.pprint(report, expand_all=True)
+
+if __name__ == "__main__":
+    app()
