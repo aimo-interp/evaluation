@@ -18,7 +18,7 @@ python robustness-analyses/main.py augment \
     data/aimo-2025-reference.jsonl \
     prompts/paraphrase.txt \
     data/ \
-    --api_model "gpt-5.2-2025-12-11" \
+    --api-model "gpt-5.2-2025-12-11" \
     --n-variants 10
 ```
 
@@ -31,7 +31,7 @@ Predictions for base problems:
 python robustness-analyses/main.py predict \
     data/aimo-2025-reference.jsonl \
     predictions/ \
-    --api_model "gpt-5.2-2025-12-11" \
+    --api-model "gpt-5.2-2025-12-11" \
     --n-repeats 100
 ```
 
@@ -41,7 +41,7 @@ Predictions for augmented problems:
 python robustness-analyses/main.py predict \
     data/aimo-2025-reference___paraphrase=gpt-5.2-2025-12-11.jsonl \
     predictions/ \
-    --api_model "gpt-5.2-2025-12-11" \
+    --api-model "gpt-5.2-2025-12-11" \
     --n-repeats 10
 ```
 
