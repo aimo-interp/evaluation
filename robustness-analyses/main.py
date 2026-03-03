@@ -218,6 +218,7 @@ def predict(
     typer.secho(f"Loading problems from {problems_file}...", fg="cyan")
     df = load_df(problems_file)
 
+    pred_dir.mkdir(parents=True, exist_ok=True)
     pred_file = pred_dir / f"{problems_file.stem}___eval={api_model}.jsonl"
     if pred_file.exists():
         raise FileExistsError(f"Output file {pred_file} already exists.")
