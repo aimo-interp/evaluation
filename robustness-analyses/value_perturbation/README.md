@@ -45,7 +45,7 @@ The `run_all.py` script automates the generation of datasets and their evaluatio
 
 ```bash
 # Generate 10 samples per task and evaluate using Gemini Thinking Pro
-python run_all.py --num_samples 10 --provider gemini --model gemini-2.0-flash-thinking-exp-01-21
+python run_all.py --num_samples 10 --provider gemini --model gemini-2.5-flash-lite
 
 # Skip generation and evaluate existing datasets using OpenAI o1
 python run_all.py --skip_gen --provider openai --model o1
