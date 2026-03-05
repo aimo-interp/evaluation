@@ -31,6 +31,7 @@ async def call_llm(
     client: openai.AsyncOpenAI,
     model: str,
     temperature: float,
+    reasoning_effort: str,
     max_retries: int,
     retry_sleep_secs: float,
     max_completion_tokens: int,
@@ -42,6 +43,7 @@ async def call_llm(
                 model=model,
                 temperature=temperature,
                 max_completion_tokens=max_completion_tokens,
+                reasoning_effort=reasoning_effort,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
@@ -68,34 +70,46 @@ async def run_bounded(coros, max_concurrency: int):
         yield await fut
 
 
-def _get_client() -> openai.AsyncAzureOpenAI:
-    """Instantiate an async Azure OpenAI client."""
-    api_key = os.getenv("AZURE_OPENAI_API_KEY")
-    if not api_key:
-        raise EnvironmentError("Set the AZURE_OPENAI_API_KEY environment variable.")
-    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-    if not endpoint:
-        raise EnvironmentError("Set the AZURE_OPENAI_ENDPOINT environment variable.")
-    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
-
-    # Quick connectivity check
-    import urllib.request
-    try:
-        req = urllib.request.Request(
-            f"{endpoint.rstrip('/')}/openai/models?api-version={api_version}",
-            headers={"api-key": api_key},
+def _get_client(provider: str) -> openai.AsyncOpenAI:
+    """Instantiate an async OpenAI-compatible client for the given provider."""
+    if provider == "google":
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise EnvironmentError("Set the GEMINI_API_KEY environment variable.")
+        return openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
         )
-        urllib.request.urlopen(req, timeout=10)
-        print(f"✓ Successfully connected to {endpoint}")
-    except Exception as e:
-        print(f"✗ Cannot reach endpoint {endpoint}: {e}")
-        print("  Check your network, VPN, firewall, or proxy settings.")
 
-    return openai.AsyncAzureOpenAI(
-        api_key=api_key,
-        azure_endpoint=endpoint,
-        api_version=api_version,
-    )
+    if provider == "openai":
+        api_key = os.getenv("AZURE_OPENAI_API_KEY")
+        if not api_key:
+            raise EnvironmentError("Set the AZURE_OPENAI_API_KEY environment variable.")
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        if not endpoint:
+            raise EnvironmentError("Set the AZURE_OPENAI_ENDPOINT environment variable.")
+        api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+
+        # Quick connectivity check
+        import urllib.request
+        try:
+            req = urllib.request.Request(
+                f"{endpoint.rstrip('/')}/openai/models?api-version={api_version}",
+                headers={"api-key": api_key},
+            )
+            urllib.request.urlopen(req, timeout=10)
+            print(f"✓ Successfully connected to {endpoint}")
+        except Exception as e:
+            print(f"✗ Cannot reach endpoint {endpoint}: {e}")
+            print("  Check your network, VPN, firewall, or proxy settings.")
+
+        return openai.AsyncAzureOpenAI(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+        )
+
+    raise ValueError(f"Unknown provider: {provider!r}. Choose 'openai' or 'google'.")
 
 
 def extract_answer(response: str) -> str:
@@ -134,11 +148,13 @@ def augment(
     output_dir: pathlib.Path,
     n_variants: int = typer.Option(10),
     max_concurrency: int = typer.Option(100),
+    provider: str = "openai",
     api_model: str = "gpt-5.2-2025-12-11",
-    temperature: float = 0.7,
+    temperature: float = 1.0,
+    reasoning_effort: str = "low",
     max_retries: int = 5,
     retry_sleep_secs: float = 10,
-    max_tokens: int = 8196,
+    max_tokens: int = 10_000,
 ) -> None:
 
     typer.secho(f"Loading system prompt from {prompt_file}...", fg="cyan")
@@ -149,12 +165,12 @@ def augment(
     df = load_df(base_problems_file)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    output_filename = output_dir / f"{base_problems_file.stem}___{prompt_file.stem}={api_model}.jsonl"
+    output_filename = output_dir / f"{base_problems_file.stem}___{prompt_file.stem}={api_model}:{reasoning_effort}.jsonl"
     if output_filename.exists():
         raise FileExistsError(f"Output file {output_filename} already exists. Please remove it before running the script.")
 
     typer.secho(f"Initializing the client...", fg="cyan")
-    client = _get_client()
+    client = _get_client(provider)
 
     records = df.to_dict(orient="records")
     total = len(records) * n_variants
@@ -169,6 +185,7 @@ def augment(
             client=client,
             model=api_model,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
             max_retries=max_retries,
             retry_sleep_secs=retry_sleep_secs,
             max_completion_tokens=max_tokens,
@@ -182,6 +199,7 @@ def augment(
             "question_api_model": api_model,
             "question_temperature": temperature,
             "question_max_tokens": max_tokens,
+            "question_reasoning_effort": reasoning_effort,
         }
 
     coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_variants)))
@@ -194,7 +212,6 @@ def augment(
                 pbar.update(1)
 
     asyncio.run(_run())
-
     typer.secho(f"Done! Generated {total} augmented problems.", fg="green")
 
 
@@ -202,13 +219,15 @@ def augment(
 def predict(
     problems_file: pathlib.Path,
     pred_dir: pathlib.Path,
-    n_repeats: int = typer.Option(...),
+    n_repeats: int = 1,
     max_concurrency: int = typer.Option(100),
+    provider: str = "openai",
     api_model: str = "gpt-5.2-2025-12-11",
-    temperature: float = 0.7,
+    temperature: float = 1.0,
     max_retries: int = 5,
     retry_sleep_secs: float = 10,
-    max_tokens: int = 8196,
+    max_tokens: int = 10_000,
+    reasoning_effort: str = "low",
     system_prompt_file: pathlib.Path | None = "./prompts/solve.txt",
 ) -> None:
     typer.secho(f"Loading system prompt from {system_prompt_file}...", fg="cyan")
@@ -219,12 +238,12 @@ def predict(
     df = load_df(problems_file)
 
     pred_dir.mkdir(parents=True, exist_ok=True)
-    pred_file = pred_dir / f"{problems_file.stem}___eval={api_model}.jsonl"
+    pred_file = pred_dir / f"{problems_file.stem}___eval={api_model}:{reasoning_effort}.jsonl"
     if pred_file.exists():
         raise FileExistsError(f"Output file {pred_file} already exists.")
 
     typer.secho(f"Initializing the client...", fg="cyan")
-    client = _get_client()
+    client = _get_client(provider)
 
     records = df.to_dict(orient="records")
     total = len(records) * n_repeats
@@ -238,6 +257,7 @@ def predict(
             client=client,
             model=api_model,
             temperature=temperature,
+            reasoning_effort=reasoning_effort,
             max_retries=max_retries,
             retry_sleep_secs=retry_sleep_secs,
             max_completion_tokens=max_tokens,
@@ -248,11 +268,12 @@ def predict(
             "predicted_result": extract_answer(prediction),
             "prediction_api_model": api_model,
             "prediction_system_prompt": system_prompt,
+            "prediction_reasoning_effort": reasoning_effort,
             "prediction_repeat_idx": repeat_idx,
             "prediction_temperature": temperature,
             "prediction_max_tokens": max_tokens,
-            "prediction_max_retries": max_retries,
-            "prediction_retry_sleep_secs": retry_sleep_secs,
+            "prediction_provider": provider,
+            "prediction_reasoning_effort": reasoning_effort,
         }
 
     coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_repeats)))
@@ -287,11 +308,20 @@ def eval(
         base_df = load_df(base_pred_file)
         base_df["is_correct"] = base_df.apply(lambda row: answers_match(row["answer"], row["predicted_result"]), axis=1)
 
+        base_solved = base_df.set_index("id")["is_correct"]
+        pred_df["base_is_correct"] = pred_df["id"].map(base_solved)
+
+        solved_mask = pred_df["base_is_correct"]
+        unsolved_mask = ~pred_df["base_is_correct"]
+
         report.update({
             "acc_base": base_df["is_correct"].mean().item(),
             "acc_delta": pred_df["is_correct"].mean().item() - base_df["is_correct"].mean().item(),
+            "acc_on_base_solved": pred_df.loc[solved_mask, "is_correct"].mean().item(),
+            "acc_on_base_unsolved": pred_df.loc[unsolved_mask, "is_correct"].mean().item(),
+            "n_problems_improved": (pred_df["is_correct"] & ~pred_df["base_is_correct"]).groupby(pred_df["id"]).any().sum(),
+            "n_problems_broken": (~pred_df["is_correct"] & pred_df["base_is_correct"]).groupby(pred_df["id"]).any().sum(),
         })
-        # TODO: add more detailed comparison
 
     typer.secho(f"Evaluation report:", fg="cyan")
     rich.pretty.pprint(report, expand_all=True)
