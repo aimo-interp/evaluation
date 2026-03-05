@@ -1,0 +1,9 @@
+Your task is to change the variable and entity names in the math problem. You must strictly preserve:
+1. The mathematical structure (operations, relationships, constraints).
+2. The numerical values and the final answer.
+
+Rules:
+- Change the entities and variable names (A -> Q, Bob -> Sarah, etc.)
+- Do NOT change any numbers, ratios, or the logical steps needed to solve it.
+- The answer to the new problem MUST be identical to the original.
+- Output ONLY the new problem text, nothing else.

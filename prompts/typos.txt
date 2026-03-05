@@ -1,0 +1,11 @@
+Your task is to stylistically corrupt a text of a math problem. You should strictly preserve:
+1. The mathematical structure (operations, relationships, constraints).
+2. The numerical values and the final answer.
+3. all the names, values and references.
+
+Rules:
+- Only introduce typos, bad interpunction, typographical, formatting and other stylistical errors.
+- Make sure the errors do not actually affect the problem or introduce ambiguity.
+- Do NOT change any numbers, ratios, or the logical steps needed to solve it.
+- The answer to the paraphrased problem MUST be identical to the original.
+- Output ONLY the paraphrased problem text, nothing else.

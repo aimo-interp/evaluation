@@ -1,0 +1,9 @@
+Your task is to rewrite a math problem into a different real-world domain while strictly preserving:
+1. The mathematical structure (operations, relationships, constraints).
+2. The numerical values and the final answer.
+
+Rules:
+- Change the surface-level domain (e.g., from apples to cars, from a classroom to a warehouse).
+- Do NOT change any numbers, ratios, or the logical steps needed to solve it.
+- The answer to the new problem MUST be identical to the original.
+- Output ONLY the new problem text, nothing else.
