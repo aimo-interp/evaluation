@@ -49,10 +49,13 @@ async def call_llm(
                     {"role": "user", "content": user_content},
                 ],
             )
+            if response.choices[0].message.content == None:
+                return ""
             return response.choices[0].message.content.strip()
         except Exception as e:
             if attempt < max_retries:
                 typer.secho(f"problem {problem_id} [attempt {attempt}/{max_retries}] failed: {e}, retrying after {retry_sleep_secs} seconds...", fg="yellow")
+                typer.secho(response)
                 await asyncio.sleep(retry_sleep_secs)
     typer.secho(f"problem {problem_id} failed after {max_retries} attempts.", fg="red")
     raise RuntimeError(f"problem {problem_id} failed after {max_retries} retries.")
@@ -79,6 +82,12 @@ def _get_client(provider: str) -> openai.AsyncOpenAI:
         return openai.AsyncOpenAI(
             api_key=api_key,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        )
+    
+    if provider == "einfra":
+        return openai.AsyncOpenAI(
+            api_key = os.getenv("EINFRA_AI_TOKEN"),
+            base_url = "https://llm.ai.e-infra.cz/v1/"
         )
 
     if provider == "openai":
@@ -152,9 +161,9 @@ def augment(
     api_model: str = "gpt-5.2-2025-12-11",
     temperature: float = 1.0,
     reasoning_effort: str = "low",
-    max_retries: int = 5,
-    retry_sleep_secs: float = 10,
-    max_tokens: int = 10_000,
+    max_retries: int = 100,
+    retry_sleep_secs: float = 30,
+    max_tokens: int | None = None,
 ) -> None:
 
     typer.secho(f"Loading system prompt from {prompt_file}...", fg="cyan")
@@ -224,9 +233,9 @@ def predict(
     provider: str = "openai",
     api_model: str = "gpt-5.2-2025-12-11",
     temperature: float = 1.0,
-    max_retries: int = 5,
-    retry_sleep_secs: float = 10,
-    max_tokens: int = 10_000,
+    max_retries: int = 100,
+    retry_sleep_secs: float = 30,
+    max_tokens: int | None = None,
     reasoning_effort: str = "low",
     system_prompt_file: pathlib.Path | None = "./prompts/solve.txt",
 ) -> None:
