@@ -7,6 +7,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate 1fce4b Augmented Dataset")
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate")
     parser.add_argument("--output", type=str, default="1fce4b_dataset.jsonl", help="Output file path (JSONL)")
+    parser.add_argument("--max_val", type=int, default=10_000_000_000, help="Max value of exponent to sample")
     args = parser.parse_args()
     
     print(f"Starting generation of {args.num_samples} 1fce4b samples...")
@@ -14,8 +15,16 @@ def main():
     print("-" * 50)
     
     with open(args.output, "w", encoding="utf-8") as f:
+        # Original problem
+        orig_exp = 2024
+        result = solve_1fce4b(orig_exp)
+        result["params"] = [orig_exp]
+        result["is_original"] = True
+        f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        print(f"Sample 0 (Original) | exponent={orig_exp} | Result={result['numeric_solution']}")
+
         # exponent can be anything large. We can sample in [1000, 10000].
-        exponents = random.sample(range(1000, 10001), min(args.num_samples, 9001))
+        exponents = random.sample(range(11, args.max_val), min(args.num_samples, 9001))
         
         for idx, exp in enumerate(exponents):
             result = solve_1fce4b(exp)

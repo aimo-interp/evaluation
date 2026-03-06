@@ -59,7 +59,7 @@ def main():
     parser.add_argument("--num_samples", type=int, default=50, help="Number of samples to generate")
     parser.add_argument("--output", type=str, default="triangle_dataset.jsonl", help="Output file path (JSONL)")
     parser.add_argument("--min_val", type=int, default=10, help="Minimum parameter value")
-    parser.add_argument("--max_val", type=int, default=100000000, help="Maximum parameter value")
+    parser.add_argument("--max_val", type=int, default=10_000_000_000, help="Maximum parameter value")
     args = parser.parse_args()
     
     print(f"Sampling valid Pythagorean configurations for AB and R between {args.min_val} and {args.max_val}...")
@@ -76,6 +76,14 @@ def main():
     print("-" * 50)
     
     with open(args.output, "w", encoding="utf-8") as f:
+        # Original problem
+        orig_ab, orig_r = 20, 26
+        result = solve_triangle(orig_ab, orig_r)
+        result["params"] = [orig_ab, orig_r]
+        result["is_original"] = True
+        f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        print(f"Sample 0 (Original) | AB={orig_ab}, R={orig_r} | Solution: {result['numeric_solution']}")
+
         for ab, r in valid_pairs[:args.num_samples]:
             result = solve_triangle(ab, r)
             

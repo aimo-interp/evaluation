@@ -6,15 +6,13 @@ import json
 
 # Define the tasks based on their 6-character ID hashes
 TASK_IDS = [
-    {"id": "057f8a", "name": "dodola"},
-    {"id": "1acac0", "name": "triangle"},
-    {"id": "bbd91e", "name": "alice_board"},
-    {"id": "a1d40b", "name": "fibonacci_prime"},
+    #{"id": "1acac0", "name": "triangle"},
+    #{"id": "bbd91e", "name": "alice_board"},
+    #{"id": "a1d40b", "name": "fibonacci_prime"},
     {"id": "480182", "name": "triangle_segment"},
-    {"id": "349493", "name": "delightful_seq"},
-    {"id": "88c219", "name": "artificial_int"},
     {"id": "71beb6", "name": "digit_sum"},
     {"id": "1fce4b", "name": "three_digit_divisor"},
+    {"id": "057f8a", "name": "dodola"},
 ]
 
 def map_task_to_dataset(tid):
@@ -26,7 +24,6 @@ def map_task_to_dataset(tid):
         "a1d40b": "a1d40b_dataset.jsonl",
         "480182": "480182_dataset.jsonl",
         "349493": "349493_dataset.jsonl",
-        "88c219": "88c219_dataset.jsonl",
         "71beb6": "71beb6_dataset.jsonl",
         "1fce4b": "1fce4b_dataset.jsonl",
     }
@@ -53,7 +50,7 @@ def run_command(cmd, env_update=None):
 def main():
     parser = argparse.ArgumentParser(description="Generate and Evaluate all IMO-symbolic tasks.")
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate per task.")
-    parser.add_argument("--provider", type=str, choices=["openai", "gemini"], required=True, help="LLM Provider.")
+    parser.add_argument("--provider", type=str, choices=["openai", "gemini", "e-infra"], required=True, help="LLM Provider.")
     parser.add_argument("--model", type=str, default="", help="Specific model name or deployment name.")
     parser.add_argument("--delay", type=int, default=5, help="Delay between API requests.")
     parser.add_argument("--skip_gen", action="store_true", help="Skip the dataset generation phase.")
@@ -74,7 +71,7 @@ def main():
         
         run_script = f"run_{tid}.py"
         dataset_path = map_task_to_dataset(tid)
-        result_path = f"results/{tid}_eval_results.jsonl"
+        result_path = f"results/{tid}_{args.model}_eval_results.jsonl"
 
         print(f"\n--- Task: {tname} ({tid}) ---")
 
@@ -105,15 +102,34 @@ def main():
                 try:
                     correct = 0
                     total = 0
+                    orig_correct = 0
+                    orig_total = 0
                     with open(result_path, 'r', encoding='utf-8') as f:
                         for line in f:
                             data = json.loads(line)
+                            is_orig = data.get("is_original", False)
                             total += 1
+                            if is_orig:
+                                orig_total += 1
                             if data.get("is_correct"):
                                 correct += 1
+                                if is_orig:
+                                    orig_correct += 1
                     
                     acc = (correct / total * 100) if total > 0 else 0
-                    summary[tname] = {"acc": acc, "count": f"{correct}/{total}"}
+                    orig_acc = (orig_correct / orig_total * 100) if orig_total > 0 else 0
+                    pert_total = total - orig_total
+                    pert_correct = correct - orig_correct
+                    pert_acc = (pert_correct / pert_total * 100) if pert_total > 0 else 0
+                    
+                    summary[tname] = {
+                        "acc": acc, 
+                        "count": f"{correct}/{total}",
+                        "orig_acc": orig_acc,
+                        "orig_count": f"{orig_correct}/{orig_total}",
+                        "pert_acc": pert_acc,
+                        "pert_count": f"{pert_correct}/{pert_total}"
+                    }
                 except Exception as e:
                     print(f"Error parsing results for {tname}: {e}")
             else:
@@ -122,12 +138,12 @@ def main():
             print(f"Error: Dataset {dataset_path} not found for {tname}.")
 
     # Final Report
-    print("\n" + "="*50)
-    print(f"{'TASK NAME':<25} | {'ACCURACY':<10} | {'SCORE'}")
-    print("-" * 50)
+    print("\n" + "="*80)
+    print(f"{'TASK NAME':<25} | {'OVERALL':<12} | {'ORIGINAL':<12} | {'PERTURBED'}")
+    print("-" * 80)
     for name, stats in summary.items():
-        print(f"{name:<25} | {stats['acc']:>8.2f}% | {stats['count']}")
-    print("="*50)
+        print(f"{name:<25} | {stats['acc']:>6.1f}% ({stats['count']:>5}) | {stats['orig_acc']:>6.1f}% ({stats['orig_count']:>3}) | {stats['pert_acc']:>6.1f}% ({stats['pert_count']:>5})")
+    print("="*80)
 
 if __name__ == "__main__":
     main()

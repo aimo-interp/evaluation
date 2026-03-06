@@ -10,16 +10,20 @@ def generate_480182_text(bc: int, ca: int, ab: int) -> str:
             f"Line $XY$ meets $BC$ at $E$. The length of the segment $BE$ can be written as $\\frac{{m}}{{n}}$, "
             f"where $m$ and $n$ are coprime positive integers. Find $m+n$.")
 
-def solve_480182(bc: int, ca: int, ab: int) -> Dict[str, Any]:
+
+def solution(bc: int, ca: int, ab: int) -> int:
     """
     Finds the length of segment BE as a fraction m/n and returns m + n.
+
     Args:
         bc: Length of side BC (a)
         ca: Length of side CA (b)
         ab: Length of side AB (c)
+
     Returns:
-        The sum of the numerator (m) and denominator (n).
+        The sum of the numerator (m) and denominator (n) of the simplified fraction for BE.
     """
+    # Use Fraction to maintain exact rational arithmetic
     a = Fraction(bc)
     b = Fraction(ca)
     c = Fraction(ab)
@@ -32,25 +36,43 @@ def solve_480182(bc: int, ca: int, ab: int) -> Dict[str, Any]:
     power_c = cx * b
 
     # Step 3: Find the second intersection of the circumcircle with line BC
-    # Power_C = CB * CB' (which is a * CB').
+    # The circumcircle intersects line BC at B and another point B'.
+    # Power_C is also equal to CB * CB' (which is a * CB').
     cb_prime = power_c / a
 
     # Step 4: Find the coordinate of E on line BC
-    # radical axis logic: x(a + cb_prime) = a * cb_prime + cx^2
+    # Let C be the origin (0) and B be at coordinate 'a'.
+    # Line XY is the radical axis of the circumcircle and circle C (radius CX).
+    # E has the same power with respect to both circles.
+    # Power of E w.r.t. circumcircle = (x - a)(x - cb_prime)
+    # Power of E w.r.t. circle C = x^2 - cx^2
+    # Equating them: x^2 - x(a + cb_prime) + a * cb_prime = x^2 - cx^2
+    # Solving for x: x(a + cb_prime) = a * cb_prime + cx^2
+
     x = (a * cb_prime + cx**2) / (a + cb_prime)
 
     # Step 5: Calculate distance BE
     be = abs(a - x)
 
-    # Step 6: Return m + n
-    m_plus_n = be.numerator + be.denominator
+    # Step 6: Return m + n (Fraction automatically reduces to coprime integers)
+    return be.numerator + be.denominator
+
+def solve_480182(bc: int, ca: int, ab: int) -> Dict[str, Any]:
+    """
+    Finds the length of segment BE as a fraction m/n and returns m + n.
+    Args:
+        bc: Length of side BC (a)
+        ca: Length of side CA (b)
+        ab: Length of side AB (c)
+    Returns:
+        The sum of the numerator (m) and denominator (n).
+    """
+
     
     return {
         "textual_problem": generate_480182_text(bc, ca, ab),
-        "numeric_solution": m_plus_n,
-        "numerator": be.numerator,
-        "denominator": be.denominator,
-        "params": {"bc": bc, "ca": ca, "ab": ab}
+        "numeric_solution": solution(bc, ca, ab),
+        "params": [bc, ca, ab]
     }
 
 if __name__ == "__main__":

@@ -26,12 +26,13 @@ def run_with_timeout(periods, timeout_seconds):
         return f"ERROR: {return_dict['error']}"
     return return_dict.get('result')
 
-def generate_periods():
+def generate_periods(orig_periods, max_mult):
     """
     Generates 3 periods in the range [10, 400] where each period is a multiple of 10.
     """
+    mult = random.randint(1, max_mult)
     # Sample 3 integers from {10, 20, 30, ..., 400}
-    periods = [random.randint(1, 40) * 10 for _ in range(3)]
+    periods = [mult * p for p in orig_periods]
     return periods
 
 def main():
@@ -39,6 +40,7 @@ def main():
     parser.add_argument("--num_samples", type=int, default=10, help="Number of samples to generate")
     parser.add_argument("--output", type=str, default="dodola_dataset.jsonl", help="Output file path (JSONL)")
     parser.add_argument("--timeout", type=int, default=300, help="Timeout per calculation in seconds (default 5 min)")
+    parser.add_argument("--max_val", type=int, default=1_000, help="Max value of multiplier to solve")
     args = parser.parse_args()
     
     generated = 0
@@ -49,9 +51,21 @@ def main():
     print("-" * 50)
     
     with open(args.output, "w", encoding="utf-8") as f:
+        # Original problem
+        orig_periods = [100, 120, 150]
+        result = solve_dodola_island(orig_periods)
+        record = {
+            "textual_problem": result["textual_problem"],
+            "numeric_solution": result["numeric_solution"],
+            "params": result["params"],
+            "is_original": True
+        }
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        print(f"Sample 0 (Original) | Periods={orig_periods} | Solution: {result['numeric_solution']}")
+
         while generated < args.num_samples:
             n = 3
-            periods = generate_periods()
+            periods = generate_periods(orig_periods, args.max_val)
             print(f"Sample {generated + 1}/{args.num_samples} | N={n}, Periods={periods} | Computing...")
             
             start = time.time()
@@ -73,8 +87,7 @@ def main():
             record = {
                 "textual_problem": result["textual_problem"],
                 "numeric_solution": result["numeric_solution"],
-                "periods": result["periods"],
-                "params": result["periods"]
+                "params": result["params"]
             }
             
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

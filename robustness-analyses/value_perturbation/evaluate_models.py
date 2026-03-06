@@ -123,6 +123,21 @@ def process_dataset(input_file: str, output_file: str, provider: str, model_name
         # default to o1 if not specified
         model_name = model_name or "o1"
     
+    elif provider == "e-infra":
+        if not HAS_OPENAI:
+            print("Error: openai library is not installed. Run `pip install openai`.")
+            return
+        if "EINFRA_AI_TOKEN" not in os.environ:
+            print("Error: EINFRA_AI_TOKEN environment variable not set.")
+            return
+        
+        client = OpenAI(
+            api_key=os.environ["EINFRA_AI_TOKEN"],
+            base_url="https://llm.ai.e-infra.cz/v1/"
+        )
+        print("Using e-infra OpenAI-compatible API")
+        model_name = model_name or "deepseek-v3.2-thinking"
+
     elif provider == "gemini":
         if not HAS_GEMINI:
             print("Error: google-genai library is not installed. Run `pip install google-genai`.")
@@ -159,7 +174,7 @@ def process_dataset(input_file: str, output_file: str, provider: str, model_name
         model_response = ""
         for attempt in range(attempts):
             try:                
-                if provider == "openai":
+                if provider == "openai" or provider == "e-infra":
                     model_response = evaluate_openai(client, problem_text, model_name)
                 else:
                     model_response = evaluate_gemini(client, problem_text, model_name)
@@ -190,7 +205,8 @@ def process_dataset(input_file: str, output_file: str, provider: str, model_name
             "ground_truth": ground_truth,
             "predicted": predicted,
             "is_correct": is_correct,
-            "model_response": model_response
+            "model_response": model_response,
+            "is_original": record.get("is_original", False)
         }
         results.append(result_record)
         with open(output_file, 'a') as out_f:
@@ -214,7 +230,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Symbolic Math Dataset with LLMs")
     parser.add_argument("--dataset", type=str, default="dodola_dataset.jsonl", help="Path to input dataset JSONL")
     parser.add_argument("--output", type=str, default="evaluation_results.jsonl", help="Path to output results JSONL")
-    parser.add_argument("--provider", type=str, choices=["openai", "gemini"], required=True, help="LLM Provider to evaluate")
+    parser.add_argument("--provider", type=str, choices=["openai", "gemini", "e-infra"], required=True, help="LLM Provider to evaluate")
     parser.add_argument("--model", type=str, default="", help="Specific model name (e.g. o1, o3-mini, gemini-2.0-flash-thinking-exp-01-21)")
     parser.add_argument("--delay", type=int, default=10, help="Delay between API requests to prevent rate limiting (seconds)")
     args = parser.parse_args()
