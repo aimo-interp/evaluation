@@ -275,7 +275,7 @@ def predict(
     typer.secho(f"Evaluating {len(records)} problems ({total} requests) using model {api_model}...", fg="cyan")
 
     async def _make_coro(row: dict, repeat_idx: int, existing_df: pd.DataFrame | None) -> dict | None:
-        if existing_df is not None:
+        if existing_df is not None and len(existing_df) > 0:
             existing_rows = existing_df[(existing_df["id"] == row["id"]) & (existing_df["prediction_repeat_idx"] == repeat_idx)]
             if len(existing_rows) > 0:
                 typer.secho(f"Prediction for problem {row['id']} repeat {repeat_idx} already exists, skipping...", fg="yellow")
