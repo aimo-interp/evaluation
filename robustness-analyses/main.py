@@ -3,6 +3,8 @@ import json
 import pathlib
 import itertools
 import os
+from typing import Literal
+from unittest import case
 
 import typer
 import pandas as pd
@@ -54,8 +56,8 @@ async def call_llm(
             return response.choices[0].message.content.strip()
         except Exception as e:
             if attempt < max_retries:
-                typer.secho(f"problem {problem_id} [attempt {attempt}/{max_retries}] failed: {e}, retrying after {retry_sleep_secs} seconds...", fg="yellow")
-                typer.secho(response)
+                typer.secho(e, fg="red")
+                typer.secho(f"problem {problem_id} [attempt {attempt}/{max_retries}], retrying after {retry_sleep_secs} seconds...", fg="yellow")
                 await asyncio.sleep(retry_sleep_secs)
     typer.secho(f"problem {problem_id} failed after {max_retries} attempts.", fg="red")
     raise RuntimeError(f"problem {problem_id} failed after {max_retries} retries.")
@@ -238,7 +240,9 @@ def predict(
     max_tokens: int | None = None,
     reasoning_effort: str = "low",
     system_prompt_file: pathlib.Path | None = "./prompts/solve.txt",
+    on_file_exists: Literal["error", "fill-missing", "overwrite"] = "error",
 ) -> None:
+    
     typer.secho(f"Loading system prompt from {system_prompt_file}...", fg="cyan")
     with open(system_prompt_file, "r") as f:
         system_prompt = f.read()
@@ -248,8 +252,20 @@ def predict(
 
     pred_dir.mkdir(parents=True, exist_ok=True)
     pred_file = pred_dir / f"{problems_file.stem}___eval={api_model}:{reasoning_effort}.jsonl"
+
+    existing_df = None
     if pred_file.exists():
-        raise FileExistsError(f"Output file {pred_file} already exists.")
+        typer.secho(f"Output file {pred_file} already exists.", fg="yellow")
+        match on_file_exists:
+            case "error":
+                raise FileExistsError(f"Output file {pred_file} already exists. Please remove it before running the script, or change `--on-file-exists` argument.")
+            case "overwrite":
+                pred_file.unlink()
+            case "fill-missing":
+                typer.secho(f"Filling missing predictions into existing file {pred_file}...", fg="cyan")
+                existing_df = load_df(pred_file)
+            case _:
+                raise ValueError(f"Unknown value for `--on-file-exists`: {on_file_exists}")
 
     typer.secho(f"Initializing the client...", fg="cyan")
     client = _get_client(provider)
@@ -258,7 +274,13 @@ def predict(
     total = len(records) * n_repeats
     typer.secho(f"Evaluating {len(records)} problems ({total} requests) using model {api_model}...", fg="cyan")
 
-    async def _make_coro(row: dict, repeat_idx: int) -> dict:
+    async def _make_coro(row: dict, repeat_idx: int, existing_df: pd.DataFrame | None) -> dict | None:
+        if existing_df is not None:
+            existing_rows = existing_df[(existing_df["id"] == row["id"]) & (existing_df["prediction_repeat_idx"] == repeat_idx)]
+            if len(existing_rows) > 0:
+                typer.secho(f"Prediction for problem {row['id']} repeat {repeat_idx} already exists, skipping...", fg="yellow")
+                return None
+
         prediction = await call_llm(
             system_prompt=system_prompt,
             user_content=row["question"],
@@ -285,14 +307,17 @@ def predict(
             "prediction_reasoning_effort": reasoning_effort,
         }
 
-    coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_repeats)))
+    coros = (_make_coro(row, i, existing_df) for row, i in itertools.product(records, range(n_repeats)))
 
     async def _run() -> None:
         with open(pred_file, "a", buffering=1) as f, tqdm.tqdm(total=total, desc="generating predictions") as pbar:
             async for result in run_bounded(coros, max_concurrency):
+                pbar.update(1)
+                pbar.refresh()
+                if result is None:
+                    continue
                 f.write(json.dumps(result) + "\n")
                 f.flush()
-                pbar.update(1)
 
     asyncio.run(_run())
     typer.secho(f"Done! Predictions saved to {pred_file}.", fg="green")
