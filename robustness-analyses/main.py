@@ -124,16 +124,13 @@ def _get_client(provider: str) -> openai.AsyncOpenAI:
 
 
 def extract_answer(response: str) -> str:
-    """Extract the final answer from the model response."""
-    for line in reversed(response.splitlines()):
-        line = line.strip()
-        if line.upper().startswith("ANSWER:"):
-            return line.split(":", 1)[1].strip()
-    # Fallback: return last non-empty line
-    for line in reversed(response.splitlines()):
-        if line.strip():
-            return line.strip()
-    return ""
+    """Extract the final answer from the model response as the last number found."""
+    import re
+    matches = re.findall(r"[-+]?\d*\.\d+|\d+", response)
+    if matches:
+        return matches[-1]
+    else:
+        return ""
 
 
 def normalize(text: str) -> str:
