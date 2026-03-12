@@ -1,10 +1,10 @@
+import random
 import asyncio
 import json
 import pathlib
 import itertools
 import os
 from typing import Literal
-from unittest import case
 
 import typer
 import pandas as pd
@@ -37,7 +37,7 @@ async def call_llm(
     max_retries: int,
     retry_sleep_secs: float,
     max_completion_tokens: int,
-) -> str:
+) -> tuple[str, str, str]:
     """Call LLM API with retries on failure."""
     for attempt in range(1, max_retries + 1):
         try:
@@ -50,10 +50,19 @@ async def call_llm(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
+                timeout=1200
             )
-            if response.choices[0].message.content == None:
-                return ""
-            return response.choices[0].message.content.strip()
+            out = response.choices[0]
+            prediction = out.message.content
+            reasoning_content = out.message.reasoning_content if hasattr(out.message, "reasoning_content") else None
+            finish_reason = out.finish_reason
+
+            if prediction is None:
+                prediction = ""
+                typer.secho("Recived empty prediction from the model.", fg="yellow")
+            else:
+                typer.secho(f"Received prediction for problem {problem_id}.", fg="green")
+            return prediction, reasoning_content, finish_reason
         except Exception as e:
             if attempt < max_retries:
                 typer.secho(e, fg="red")
@@ -186,7 +195,7 @@ def augment(
 
     async def _make_coro(row: dict, variant_idx: int) -> dict:
         question = row["question"]
-        paraphrased = await call_llm(
+        paraphrased, reasoning_content, finish_reason = await call_llm(
             system_prompt=system_prompt,
             user_content=question,
             problem_id=f"{row['id']}/variant_{variant_idx}",
@@ -208,6 +217,8 @@ def augment(
             "question_temperature": temperature,
             "question_max_tokens": max_tokens,
             "question_reasoning_effort": reasoning_effort,
+            "question_reasoning_content": reasoning_content,
+            "question_finish_reason": finish_reason,
         }
 
     coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_variants)))
@@ -273,12 +284,12 @@ def predict(
 
     async def _make_coro(row: dict, repeat_idx: int, existing_df: pd.DataFrame | None) -> dict | None:
         if existing_df is not None and len(existing_df) > 0:
-            existing_rows = existing_df[(existing_df["id"] == row["id"]) & (existing_df["question"] == row["question"]) & (existing_df["prediction_repeat_idx"] == repeat_idx)]
+            existing_rows = existing_df[(existing_df["id"] == row["id"]) & (existing_df["question"] == row["question"]) & (existing_df["prediction_repeat_idx"] == repeat_idx) & (existing_df["prediction"] != "")]
             if len(existing_rows) > 0:
                 typer.secho(f"Prediction for problem {row['id']} repeat {repeat_idx} already exists, skipping...", fg="yellow")
                 return None
 
-        prediction = await call_llm(
+        prediction, reasoning_content, finish_reason = await call_llm(
             system_prompt=system_prompt,
             user_content=row["question"],
             problem_id=row["id"],
@@ -302,9 +313,13 @@ def predict(
             "prediction_max_tokens": max_tokens,
             "prediction_provider": provider,
             "prediction_reasoning_effort": reasoning_effort,
+            "prediction_reasoning_content": reasoning_content,
+            "prediction_finish_reason": finish_reason,
         }
 
-    coros = (_make_coro(row, i, existing_df) for row, i in itertools.product(records, range(n_repeats)))
+    todo = list(itertools.product(records, range(n_repeats)))
+    random.shuffle(todo)
+    coros = (_make_coro(row, i, existing_df) for row, i in todo)
 
     async def _run() -> None:
         with open(pred_file, "a", buffering=1) as f, tqdm.tqdm(total=total, desc="generating predictions") as pbar:
