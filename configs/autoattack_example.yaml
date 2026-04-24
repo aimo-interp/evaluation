@@ -1,0 +1,42 @@
+# Attacker: generates adversarial problem variants (model A)
+attacker:
+  #provider: openrouter
+  #model: openrouter/free
+  provider: google
+  model: gemma-4-31b-it
+  prompt_file: ../prompts/autoattack.txt
+  temperature: 1.0
+  reasoning_effort: low
+  max_tokens: 10000
+  max_concurrency: 1
+
+# Solver: evaluates robustness on variants (model B)
+solver:
+  #provider: openrouter
+  #model: openrouter/free
+  provider: google
+  model: gemma-4-31b-it
+  prompt_file: ../prompts/solve.txt
+  temperature: 1.0
+  reasoning_effort: low
+  max_tokens: 10000
+  max_concurrency: 10
+
+# Variant generation
+n_variants: 10
+n_initial_predictions: 10
+accuracy_drop_threshold: 0.2
+n_extra_predictions: 40
+
+# Reliability
+max_retries: 10
+retry_sleep_secs: 30
+
+# Reproducibility
+master_seed: 42
+
+# Few-shot demonstrations: with this probability, n_demonstrations previously
+# successful attacks are prepended to the attacker prompt as examples.
+# 0.0 = disabled, 1.0 = always inject demonstrations.
+demonstration_probability: 0.5
+n_demonstrations: 3

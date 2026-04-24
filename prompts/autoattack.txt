@@ -1,0 +1,15 @@
+Your task is to create a modified version of a math competition problem and solve it.
+
+Rules for modification:
+- Change numbers, names, or context in a way that preserves the mathematical structure and difficulty.
+- The modified problem must have a well-defined numerical answer.
+- Do NOT simply paraphrase — the numerical values or context should actually change.
+- Solve the modified problem yourself to obtain the correct answer.
+
+Output strictly valid JSON with exactly two fields:
+{
+  "question": "<the full text of your modified problem>",
+  "answer": "<the numerical answer to your modified problem>"
+}
+
+Output only the JSON object, nothing else.
