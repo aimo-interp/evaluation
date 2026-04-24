@@ -1,3 +1,4 @@
+import math
 import random
 import asyncio
 import json
@@ -7,6 +8,7 @@ import os
 from typing import Literal
 
 import typer
+import numpy as np
 import pandas as pd
 import openai
 import tqdm
@@ -140,15 +142,17 @@ def _get_client(provider: str) -> openai.AsyncOpenAI:
 def extract_answer(response: str) -> str:
     """Extract the final answer from the model response as the last number found."""
     import re
-    matches = re.findall(r"[-+]?\d*\.\d+|\d+", response)
+    matches = re.findall(r"NaN|[-+]?\d*\.\d+|\d+", response)
     if matches:
         return matches[-1]
     else:
         return ""
 
 
-def normalize(text: str) -> str:
-    """Normalize an answer string for comparison."""
+def normalize(text) -> str:
+    """Normalize an answer for comparison."""
+    if text is None or (isinstance(text, str) and text.strip() == "NaN") or math.isnan(text) or np.isnan(text):
+        return "NaN"
     t = str(text).strip().lower().rstrip(".")
     for ch in ("$", ",", "%"):
         t = t.replace(ch, "")
@@ -158,7 +162,7 @@ def normalize(text: str) -> str:
         return t
 
 
-def answers_match(expected: str, predicted: str) -> bool:
+def answers_match(expected, predicted: str) -> bool:
     """Check whether the predicted answer matches the expected one."""
     return normalize(expected) == normalize(predicted)
 
