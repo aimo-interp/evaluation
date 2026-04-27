@@ -1,12 +1,14 @@
+import math
+import random
 import asyncio
 import json
 import pathlib
 import itertools
 import os
 from typing import Literal
-from unittest import case
 
 import typer
+import numpy as np
 import pandas as pd
 import openai
 import tqdm
@@ -37,10 +39,14 @@ async def call_llm(
     max_retries: int,
     retry_sleep_secs: float,
     max_completion_tokens: int,
-) -> str:
+    seed: int,
+) -> tuple[str, str, str]:
     """Call LLM API with retries on failure."""
     for attempt in range(1, max_retries + 1):
         try:
+            extras = {}
+            if seed is not None:
+                extras["seed"] = seed
             response = await client.chat.completions.create(
                 model=model,
                 temperature=temperature,
@@ -50,10 +56,20 @@ async def call_llm(
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_content},
                 ],
+                timeout=2*60*60,
+                **extras
             )
-            if response.choices[0].message.content == None:
-                return ""
-            return response.choices[0].message.content.strip()
+            out = response.choices[0]
+            prediction = out.message.content
+            reasoning_content = out.message.reasoning_content if hasattr(out.message, "reasoning_content") else None
+            finish_reason = out.finish_reason
+
+            if prediction is None:
+                prediction = ""
+                typer.secho("Recived empty prediction from the model.", fg="yellow")
+            else:
+                typer.secho(f"Received prediction for problem {problem_id}.", fg="green")
+            return prediction, reasoning_content, finish_reason
         except Exception as e:
             if attempt < max_retries:
                 typer.secho(e, fg="red")
@@ -124,20 +140,19 @@ def _get_client(provider: str) -> openai.AsyncOpenAI:
 
 
 def extract_answer(response: str) -> str:
-    """Extract the final answer from the model response."""
-    for line in reversed(response.splitlines()):
-        line = line.strip()
-        if line.upper().startswith("ANSWER:"):
-            return line.split(":", 1)[1].strip()
-    # Fallback: return last non-empty line
-    for line in reversed(response.splitlines()):
-        if line.strip():
-            return line.strip()
-    return ""
+    """Extract the final answer from the model response as the last number found."""
+    import re
+    matches = re.findall(r"NaN|[-+]?\d*\.\d+|\d+", response)
+    if matches:
+        return matches[-1]
+    else:
+        return ""
 
 
-def normalize(text: str) -> str:
-    """Normalize an answer string for comparison."""
+def normalize(text) -> str:
+    """Normalize an answer for comparison."""
+    if text is None or (isinstance(text, str) and text.strip() == "NaN") or math.isnan(text) or np.isnan(text):
+        return "NaN"
     t = str(text).strip().lower().rstrip(".")
     for ch in ("$", ",", "%"):
         t = t.replace(ch, "")
@@ -147,7 +162,7 @@ def normalize(text: str) -> str:
         return t
 
 
-def answers_match(expected: str, predicted: str) -> bool:
+def answers_match(expected, predicted: str) -> bool:
     """Check whether the predicted answer matches the expected one."""
     return normalize(expected) == normalize(predicted)
 
@@ -166,6 +181,8 @@ def augment(
     max_retries: int = 100,
     retry_sleep_secs: float = 30,
     max_tokens: int | None = None,
+    master_seed: int | None = None,
+    seeding: bool = True,
 ) -> None:
 
     typer.secho(f"Loading system prompt from {prompt_file}...", fg="cyan")
@@ -180,16 +197,18 @@ def augment(
     if output_filename.exists():
         raise FileExistsError(f"Output file {output_filename} already exists. Please remove it before running the script.")
 
-    typer.secho(f"Initializing the client...", fg="cyan")
+    typer.secho("Initializing the client...", fg="cyan")
     client = _get_client(provider)
 
     records = df.to_dict(orient="records")
     total = len(records) * n_variants
     typer.secho(f"Generating variants for {len(records)} problems (total {total} variants) using model {api_model}...", fg="cyan")
 
+    master_rng = random.Random(master_seed) if seeding else None
     async def _make_coro(row: dict, variant_idx: int) -> dict:
         question = row["question"]
-        paraphrased = await call_llm(
+        seed = master_rng.randint(0, 2**32 - 1) if master_rng is not None else None
+        paraphrased, reasoning_content, finish_reason = await call_llm(
             system_prompt=system_prompt,
             user_content=question,
             problem_id=f"{row['id']}/variant_{variant_idx}",
@@ -200,6 +219,7 @@ def augment(
             max_retries=max_retries,
             retry_sleep_secs=retry_sleep_secs,
             max_completion_tokens=max_tokens,
+            seed=seed,
         )
         return {
             **row,
@@ -211,6 +231,9 @@ def augment(
             "question_temperature": temperature,
             "question_max_tokens": max_tokens,
             "question_reasoning_effort": reasoning_effort,
+            "question_reasoning_content": reasoning_content,
+            "question_finish_reason": finish_reason,
+            "question_seed": seed,
         }
 
     coros = (_make_coro(row, i) for row, i in itertools.product(records, range(n_variants)))
@@ -239,8 +262,10 @@ def predict(
     retry_sleep_secs: float = 30,
     max_tokens: int | None = None,
     reasoning_effort: str = "low",
+    master_seed: int | None = None,
     system_prompt_file: pathlib.Path | None = "./prompts/solve.txt",
     on_file_exists: Literal["error", "fill-missing", "overwrite"] = "error",
+    seeding: bool = True,
 ) -> None:
     
     typer.secho(f"Loading system prompt from {system_prompt_file}...", fg="cyan")
@@ -267,21 +292,23 @@ def predict(
             case _:
                 raise ValueError(f"Unknown value for `--on-file-exists`: {on_file_exists}")
 
-    typer.secho(f"Initializing the client...", fg="cyan")
+    typer.secho("Initializing the client...", fg="cyan")
     client = _get_client(provider)
 
     records = df.to_dict(orient="records")
     total = len(records) * n_repeats
     typer.secho(f"Evaluating {len(records)} problems ({total} requests) using model {api_model}...", fg="cyan")
 
+    master_rng = random.Random(master_seed) if seeding else None
+
     async def _make_coro(row: dict, repeat_idx: int, existing_df: pd.DataFrame | None) -> dict | None:
         if existing_df is not None and len(existing_df) > 0:
-            existing_rows = existing_df[(existing_df["id"] == row["id"]) & (existing_df["prediction_repeat_idx"] == repeat_idx)]
+            existing_rows = existing_df[(existing_df["id"] == row["id"]) & (existing_df["question"] == row["question"]) & (existing_df["prediction_repeat_idx"] == repeat_idx) & (existing_df["prediction"] != "")]
             if len(existing_rows) > 0:
                 typer.secho(f"Prediction for problem {row['id']} repeat {repeat_idx} already exists, skipping...", fg="yellow")
                 return None
-
-        prediction = await call_llm(
+        seed = master_rng.randint(0, 2**32 - 1) if master_rng is not None else None
+        prediction, reasoning_content, finish_reason = await call_llm(
             system_prompt=system_prompt,
             user_content=row["question"],
             problem_id=row["id"],
@@ -292,6 +319,7 @@ def predict(
             max_retries=max_retries,
             retry_sleep_secs=retry_sleep_secs,
             max_completion_tokens=max_tokens,
+            seed=seed,
         )
         return {
             **row,
@@ -304,10 +332,14 @@ def predict(
             "prediction_temperature": temperature,
             "prediction_max_tokens": max_tokens,
             "prediction_provider": provider,
-            "prediction_reasoning_effort": reasoning_effort,
+            "prediction_reasoning_content": reasoning_content,
+            "prediction_finish_reason": finish_reason,
+            "prediction_seed": seed,
         }
 
-    coros = (_make_coro(row, i, existing_df) for row, i in itertools.product(records, range(n_repeats)))
+    todo = list(itertools.product(records, range(n_repeats)))
+    #random.shuffle(todo)
+    coros = (_make_coro(row, i, existing_df) for row, i in todo)
 
     async def _run() -> None:
         with open(pred_file, "a", buffering=1) as f, tqdm.tqdm(total=total, desc="generating predictions") as pbar:
@@ -337,7 +369,7 @@ def eval(
     }
 
     if base_pred_file is None:
-        typer.secho(f"No base predictions file provided. Reporting limited evaluation results.", fg="yellow")
+        typer.secho("No base predictions file provided. Reporting limited evaluation results.", fg="yellow")
     else:
         base_df = load_df(base_pred_file)
         base_df["is_correct"] = base_df.apply(lambda row: answers_match(row["answer"], row["predicted_result"]), axis=1)
@@ -357,7 +389,7 @@ def eval(
             "n_problems_broken": (~pred_df["is_correct"] & pred_df["base_is_correct"]).groupby(pred_df["id"]).any().sum(),
         })
 
-    typer.secho(f"Evaluation report:", fg="cyan")
+    typer.secho("Evaluation report:", fg="cyan")
     rich.pretty.pprint(report, expand_all=True)
 
 if __name__ == "__main__":
