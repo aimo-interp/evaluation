@@ -1,0 +1,17 @@
+model_hf_id,problem_id,problem,perturbation_type,model_is_robust
+Qwen/Qwen3.5-27B,349493,"We call a sequence a_1,a_2,... of non-negative integers delightful if there exists N such that for all n>N a_n=0 and for all i>=1 a_i counts the number of multiples of i in a_1,...,a_N. How many delightful sequences exist?",distract,1
+Qwen/Qwen3.5-27B,71beb6,For a positive integer n let S(n) be the sum of digits in base 10. Compute S(S(1)+S(2)+...+S(N)) with N=10^100−2.,rename,1
+moonshotai/Kimi-K2.5,71beb6,For a positive integer n let S(n) be the sum of digits in base 10. Compute S(S(1)+S(2)+...+S(N)) with N=10^100−2.,rephrase,1
+Qwen/Qwen3.5-27B,057f8a,"Three airline companies depart every 100, 120 and 150 days respectively from Dodola island. What is the greatest positive integer d such that there will be d consecutive days without a flight regardless of departure times?",rephrase,1
+openai/gpt-oss-120b,71beb6,For a positive integer n let S(n) be the sum of digits in base 10. Compute S(S(1)+S(2)+...+S(N)) with N=10^100−2.,expert-rephrase,1
+Qwen/Qwen3.5-27B,bbd91e,Alice writes integers 1 to n (n>=11). Bob erases ten numbers. The mean of remaining numbers is 3000/37. Let erased sum be S. Find remainder of n*S mod 997.,no_solution,1
+openai/gpt-oss-120b,a1d40b,Count prime factors (with multiplicity) of N where N counts n<10^101 such that n^2+(n+1)^2 divisible by 5 but F_{n-1}^2+F_n^2 not divisible by 5.,no_solution,1
+Qwen/Qwen3.5-27B,a1d40b,Count prime factors (with multiplicity) of N where N counts n<10^101 such that n^2+(n+1)^2 divisible by 5 but F_{n-1}^2+F_n^2 not divisible by 5.,no_solution,1
+Qwen/Qwen3.5-27B,1acac0,Triangle ABC has AB=120 and circumradius 100. Let D be foot from C to AB. What is the maximum possible CD?,no_solution,0
+openai/gpt-oss-120b,1fce4b,Find the three-digit integer n such that repeating any other three-digit number 10^2024 and 10^2024+2 times gives numbers divisible by n.,no_solution,0
+Qwen/Qwen3.5-27B,1fce4b,Find the three-digit integer n such that repeating any other three-digit number 10^2024 and 10^2024+2 times gives numbers divisible by n.,distract,0
+Qwen/Qwen3.5-27B,480182,"Triangle ABC has BC=108 CA=126 AB=39. With angle bisector BX and circumcircle constructions as defined, compute m+n if BE=m/n.",rephrase,0
+moonshotai/Kimi-K2.5,a1d40b,Count prime factors (with multiplicity) of N where N counts n<10^101 such that n^2+(n+1)^2 divisible by 5 but F_{n-1}^2+F_n^2 not divisible by 5.,rephrase,0
+moonshotai/Kimi-K2.5,1acac0,Triangle ABC has AB=120 and circumradius 100. Let D be foot from C to AB. What is the maximum possible CD?,distract,0
+THUDM/glm-4.7,a1d40b,Count prime factors (with multiplicity) of N where N counts n<10^101 such that n^2+(n+1)^2 divisible by 5 but F_{n-1}^2+F_n^2 not divisible by 5.,domain,0
+THUDM/glm-4.7,bbd91e,Alice writes integers 1 to n (n>=11). Bob erases ten numbers. The mean of remaining numbers is 3000/37. Let erased sum be S. Find remainder of n*S mod 997.,rephrase,0
