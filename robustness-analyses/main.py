@@ -107,7 +107,20 @@ def _get_client(provider: str) -> openai.AsyncOpenAI:
             api_key = os.getenv("EINFRA_AI_TOKEN"),
             base_url = "https://llm.ai.e-infra.cz/v1/"
         )
-
+    if provider == "openrouter":
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            raise EnvironmentError("OPENROUTER_API_KEY not set.")
+        return openai.AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
+    if provider == "local":
+        base_url = os.getenv("LOCAL_API_BASE_URL", "http://localhost:8000/v1/")
+        return openai.AsyncOpenAI(
+            api_key=os.getenv("LOCAL_API_KEY", "local"),
+            base_url=base_url,
+        )
     if provider == "openai":
         api_key = os.getenv("AZURE_OPENAI_API_KEY")
         if not api_key:
